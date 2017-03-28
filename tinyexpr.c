@@ -116,7 +116,7 @@ static double e() {return 2.71828182845904523536;}
 
 static const te_variable functions[] = {
     /* must be in alphabetical order */
-    {"abs", fabs,     TE_FUNCTION1 | TE_FLAG_PURE, 0},
+    // {"abs", fabs,     TE_FUNCTION1 | TE_FLAG_PURE, 0},
     {"acos", acos,    TE_FUNCTION1 | TE_FLAG_PURE, 0},
     {"asin", asin,    TE_FUNCTION1 | TE_FLAG_PURE, 0},
     {"atan", atan,    TE_FUNCTION1 | TE_FLAG_PURE, 0},
@@ -186,6 +186,9 @@ static double mul(double a, double b) {return a * b;}
 static double divide(double a, double b) {return a / b;}
 static double negate(double a) {return -a;}
 static double comma(double a, double b) {return b;}
+static double bit_and(double a, double b) {return (double)((unsigned int)a & (unsigned int)b);}
+static double bit_or(double a, double b) {return (double)((unsigned int)a | (unsigned int)b);}
+static double logic_not(double a) {return (double)(!((int)a));}
 
 
 void next_token(state *s) {
@@ -243,6 +246,9 @@ void next_token(state *s) {
                     case '/': s->type = TOK_INFIX; s->function = divide; break;
                     case '^': s->type = TOK_INFIX; s->function = pow; break;
                     case '%': s->type = TOK_INFIX; s->function = fmod; break;
+                    case '&': s->type = TOK_INFIX; s->function = bit_and; break;
+                    case '|': s->type = TOK_INFIX; s->function = bit_or; break;
+                    case '!': s->type = TOK_INFIX; s->function = logic_not; break;
                     case '(': s->type = TOK_OPEN; break;
                     case ')': s->type = TOK_CLOSE; break;
                     case ',': s->type = TOK_SEP; break;
@@ -355,10 +361,16 @@ static te_expr *base(state *s) {
 
 
 static te_expr *power(state *s) {
-    /* <power>     =    {("-" | "+")} <base> */
+    /* <power>     =    {("-" | "+" | "!")} <base> */
     int sign = 1;
-    while (s->type == TOK_INFIX && (s->function == add || s->function == sub)) {
-        if (s->function == sub) sign = -sign;
+    while (s->type == TOK_INFIX && (s->function == add || s->function == sub || s->function == logic_not)) {
+        if (s->function == sub){
+            sign = -sign;
+        }
+        else if (s->function == logic_not){
+            sign = 0;
+        }
+
         next_token(s);
     }
 
@@ -366,7 +378,12 @@ static te_expr *power(state *s) {
 
     if (sign == 1) {
         ret = base(s);
-    } else {
+    } 
+    else if (sign == 0){
+        ret = NEW_EXPR(TE_FUNCTION1 | TE_FLAG_PURE, base(s));
+        ret->function = logic_not;
+    }
+    else{
         ret = NEW_EXPR(TE_FUNCTION1 | TE_FLAG_PURE, base(s));
         ret->function = negate;
     }
@@ -460,10 +477,38 @@ static te_expr *expr(state *s) {
     return ret;
 }
 
+static te_expr *and(state *s) {
+    /* <expr>      =    <term> {("&") <term>} */
+    te_expr *ret = expr(s);
+
+    while (s->type == TOK_INFIX && (s->function == bit_and)) {
+        te_fun2 t = s->function;
+        next_token(s);
+        ret = NEW_EXPR(TE_FUNCTION2 | TE_FLAG_PURE, ret, expr(s));
+        ret->function = t;
+    }
+
+    return ret;
+}
+
+static te_expr *or(state *s) {
+    /* <expr>      =    <term> {("&") <term>} */
+    te_expr *ret = and(s);
+
+    while (s->type == TOK_INFIX && (s->function == bit_or)) {
+        te_fun2 t = s->function;
+        next_token(s);
+        ret = NEW_EXPR(TE_FUNCTION2 | TE_FLAG_PURE, ret, and(s));
+        ret->function = t;
+    }
+
+    return ret;
+}
+
 
 static te_expr *list(state *s) {
     /* <list>      =    <expr> {"," <expr>} */
-    te_expr *ret = expr(s);
+    te_expr *ret = or(s);
 
     while (s->type == TOK_SEP) {
         next_token(s);
